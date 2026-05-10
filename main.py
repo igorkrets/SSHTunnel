@@ -25,8 +25,15 @@ def get_temp_icon_path():
     atexit.register(lambda: os.path.exists(icon_path) and os.remove(icon_path))
     return icon_path
 
-TUNNEL_FILE = os.path.join(os.path.dirname(__file__), "tunnel.json")
-KEY_FILE = os.path.join(os.path.dirname(__file__), "key.bin")
+def get_app_dir():
+    if getattr(sys, 'frozen', False):
+        # Если запущено как exe
+        return os.path.dirname(sys.executable)
+    else:
+        return os.path.dirname(os.path.abspath(__file__))
+
+TUNNEL_FILE = os.path.join(get_app_dir(), "tunnel.json")
+KEY_FILE = os.path.join(get_app_dir(), "key.bin")
 
 # --- Encryption helpers ---
 def get_key():
@@ -295,14 +302,28 @@ def remove_from_autorun():
 def main():
     app = QtWidgets.QApplication(sys.argv)
     # Создать tunnel.json и key.bin если их нет
-    if not os.path.exists(TUNNEL_FILE):
-        with open(TUNNEL_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'connections': []}, f, ensure_ascii=False, indent=2)
-    if not os.path.exists(KEY_FILE):
-        from cryptography.fernet import Fernet
-        key = Fernet.generate_key()
-        with open(KEY_FILE, 'wb') as f:
-            f.write(key)
+    print(f"TUNNEL_FILE: {TUNNEL_FILE}")
+    print(f"KEY_FILE: {KEY_FILE}")
+    try:
+        if not os.path.exists(TUNNEL_FILE):
+            with open(TUNNEL_FILE, 'w', encoding='utf-8') as f:
+                json.dump({'connections': []}, f, ensure_ascii=False, indent=2)
+            print("tunnel.json создан")
+        else:
+            print("tunnel.json уже есть")
+    except Exception as e:
+        print(f"Ошибка создания tunnel.json: {e}")
+    try:
+        if not os.path.exists(KEY_FILE):
+            from cryptography.fernet import Fernet
+            key = Fernet.generate_key()
+            with open(KEY_FILE, 'wb') as f:
+                f.write(key)
+            print("key.bin создан")
+        else:
+            print("key.bin уже есть")
+    except Exception as e:
+        print(f"Ошибка создания key.bin: {e}")
     add_to_autorun()
     tray_icon = TrayIcon(app, None)
     main_window = MainWindow(tray_icon)
