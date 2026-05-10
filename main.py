@@ -77,20 +77,49 @@ class SSHTunnelWorker(QtCore.QThread):
                 password=decrypt_password(self.conn['password'])
             )
             transport = self.ssh_client.get_transport()
-            # Для reverse tunnel используем правильный вызов
-            # (address, port, handler=None)
-            transport.request_port_forward(
-                '127.0.0.1',
-                int(self.conn['forward_port'])
-            )
+            forward_port = int(self.conn['forward_port'])
+            local_port = int(self.conn['local_port'])
+            # Слушаем порт на сервере (reverse tunnel)
+            transport.request_port_forward('127.0.0.1', forward_port, handler=None)
             self.statusChanged.emit('Активно')
             while self.running:
-                QtCore.QThread.msleep(1000)
+                chan = transport.accept(1)
+                if chan is None:
+                    continue
+                # Для каждого входящего соединения на сервере создаём локальное подключение
+                threading.Thread(target=self._handle_channel, args=(chan, local_port), daemon=True).start()
         except Exception as e:
             self.statusChanged.emit(f'Ошибка: {e}')
         finally:
             if self.ssh_client:
                 self.ssh_client.close()
+
+    def _handle_channel(self, chan, local_port):
+        try:
+            import socket
+            sock = socket.socket()
+            sock.connect(('127.0.0.1', local_port))
+        except Exception as e:
+            chan.close()
+            return
+        # Пересылка данных между chan <-> sock
+        def forward(src, dst):
+            try:
+                while True:
+                    data = src.recv(1024)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except Exception:
+                pass
+            finally:
+                try: dst.shutdown(socket.SHUT_RDWR)
+                except: pass
+                dst.close()
+        t1 = threading.Thread(target=forward, args=(chan, sock), daemon=True)
+        t2 = threading.Thread(target=forward, args=(sock, chan), daemon=True)
+        t1.start()
+        t2.start()
 
     def stop(self):
         self.running = False
