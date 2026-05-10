@@ -2,6 +2,8 @@ import sys
 import os
 import json
 import base64
+import tempfile
+import atexit
 import subprocess
 import threading
 from PyQt5 import QtWidgets, QtGui, QtCore
@@ -9,7 +11,20 @@ from cryptography.fernet import Fernet
 import paramiko
 
 APP_NAME = "SSHTunnelManager"
-ICON_PATH = os.path.join(os.path.dirname(__file__), "tray_icon.ico")
+# tray_icon.ico вшит как base64
+ICON_B64 = """
+AAABAAEAICAAAAEAIACoEAAAFgAAACgAAAAgAAAAQAAAAAEAIAAAAAAAABAAAMMOAADDDgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADSQZwA1EijANNEnwbTRJ8U00SfHNNEnx/TRJ8f00SfH9NEnx/TRJ8f00SfH9NEnx/TRJ8f00SfH9NEnx/TRJ8f00SfH9NEnx/TRJ8f00SfH9NEnx/TRJ8c00SfFNNEnwbTSKIA0kGcAAAAAAAAAAAAAAAAAAAAAAAAAAAA1UmiANVJogfUSKFZ1EehsdRHodTUR6Hd1Eeh4NRHoeDUR6Hg1Eeh4NRHoeDUR6Hg1Eeh4NRHoeDUR6Hg1Eeh4NRHoeDUR6Hg1Eeh4NRHoeDUR6Hg1Eeh4NRHod3UR6HU1EehstRIoVnVSaIH1UmiAAAAAAAAAAAAAAAAANdNpADLLI8A1kykbtZLo/bWS6P/1kuj/9ZLo//WS6P/1kuj/9ZLo//WS6P/1kuj/9ZLo//WS6P/1kuj/9ZLo//WS6P/1kuj/9ZLo//WS6P/1kuj/9ZLo//WS6P/1kuj/9ZLo//WS6P/1kuj9tZMpG7NLI8A102kAAAAAAAAAAAA2FCnANhQpxzYT6bX2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m/9hPpv/YT6b/2E+m19hQpxzYUKcAAAAAAAAAAADZVKkA2VSpQNlUqfXZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn/2VSp/9lUqf/ZVKn12VSpQNlUqQAAAAAAAAAAANtYrADbWKxT21is/NtYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrP/bWKz/21is/9tYrPzbWKxT21isAAAAAAAAAAAA3V2uAN1drlndXa7+3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/91drv/dXa7/3V2u/t1drlndXa4AAAAAAAAAAADfYbEA32GxWt9hsf7fYbH/32Gx/99hsf/fYbH/32Gx/99hse3fYLGz32Gx2N9hsf/fYbH/32Gx/99hsf/fYbHZ32Cxp99gsaXfYLGl32CxpN9gsbDfYbHu32Gx/99hsf/fYbH/32Gx/99hsf/fYbH+32GxWt9hsQAAAAAAAAAAAOFmtADhZrRa4Wa0/uFmtP/hZrT/4Wa0/+FmtP/hZrT/4WW0gNxcrgHgZLMt4WW0x+FmtP/hZrT/4Wa07uBlsz/gY7EA5Gu5AeRruQHmbrsB3l+wAuFltIDhZrT/4Wa0/+FmtP/hZrT/4Wa0/+FmtP7hZrRa4Wa0AAAAAAAAAAAA42q3AONqt1rjarf+42q3/+Nqt//jarf/42q3/+Nqt//ja7d/10GeAOJptgDiaLUr4mq3x+Nqt//jarfv42u4P+ZtuQDfZbMB32WzAd1isQHkcLsC42u3gONqt//jarf/42q3/+Nqt//jarf/42q3/uNqt1rjarcAAAAAAAAAAADkb7oA5G+6WuRvuv7kb7r/5G+6/+Rvuv/kb7r/5G+6/+RvuuvlcLpb53a+AeRuuQDkbbgr5G65x+Rvuv/lb7rZ5XC6p+VwuqXlcLql5XC6pOVwurDkb7ru5G+6/+Rvuv/kb7r/5G+6/+Rvuv/kb7r+5G+6WuRvugAAAAAAAAAAAOZzvADmc7xa5nO8/uZzvP/mc7z/5nO8/+ZzvP/mc7z/5nO8/+ZzvOrndL1b53rAAeZzvADmcrst5nO80+ZzvP/mc7z/5nO8/+ZzvP/mc7z/5nO8/+ZzvP/mc7z/5nO8/+ZzvP/mc7z/5nO8/+ZzvP7mc7xa5nO8AAAAAAAAAAAA6Hi/AOh4v1roeL/+6Hi//+h4v//oeL//6Hi//+h4v//oeL//6Hi//+h4v+zpecBV6He/AOh5wADoeL986Hi//+h4v//oeL//6Hi//+h4v//oeL//6Hi//+h4v//oeL//6Hi//+h4v//oeL//6Hi//uh4v1roeL8AAAAAAAAAAADqfMIA6nzCWup8wv7qfML/6nzC/+p8wv/qfML/6nzC/+p8wv/qfML/6nzC7Ol7wVXqfcIA6nvBAOp8wnvqfML/6nzC/+p8wv/qfML/6nzC/+p8wv/qfML/6nzC/+p8wv/qfML/6nzC/+p8wv/qfML+6nzCWup8wgAAAAAAAAAAAOyBxQDsgcVa7IHF/uyBxf/sgcX/7IHF/+yBxf/sgcX/7IHF/+yBxerrgMRb6nrBAeyBxQDsgsYt7IHF0+yBxf/sgcX/7IHF/+yBxf/sgcX/7IHF/+yBxf/sgcX/7IHF/+yBxf/sgcX/7IHF/+yBxf7sgcVa7IHFAAAAAAAAAAAA7oXHAO6Fx1ruhcf+7oXH/+6Fx//uhcf/7oXH/+6Fx//uhcfr7YTHW+x+wwHuhsgA7ofIK+6GyMfuhcf/7oXH/+6Fx//uhcf/7oXH/+6Fx//uhcf/7oXH/+6Fx//uhcf/7oXH/+6Fx//uhcf/7oXH/u6Fx1ruhccAAAAAAAAAAADvisoA74rKWu+Kyv7visr/74rK/++Kyv/visr/74rK/++Jyn/7u+YA8IvLAPCMyyvwisrH74rK/++Kyv/visr/74rK/++Kyv/visr/74rK/++Kyv/visr/74rK/++Kyv/visr/74rK/++Kyv/visr+74rKWu+KygAAAAAAAAAAAPGOzQDxjs1a8Y7N/vGOzf/xjs3/8Y7N//GOzf/xjs3/8Y/NgPeZ0wHykM4t8Y/Nx/GOzf/xjs3/8Y7N//GOzf/xjs3/8Y7N//GOzf/xjs3/8Y7N//GOzf/xjs3/8Y7N//GOzf/xjs3/8Y7N//GOzf7xjs1a8Y7NAAAAAAAAAAAA85PQAPOT0Frzk9D+85PQ//OT0P/zk9D/85PQ//OT0P/zk9Dt85TQsvOT0Njzk9D/85PQ//OT0P/zk9D/85PQ//OT0P/zk9D/85PQ//OT0P/zk9D/85PQ//OT0P/zk9D/85PQ//OT0P/zk9D/85PQ/vOT0Frzk9AAAAAAAAAAAAD1l9MA9ZfTWfWX0/71l9P/9ZfT//WX0//1l9P/9ZfT//WX0//1l9P/9ZfT//WX0//1l9P/9ZfT//1l9P/9ZfT//1l9P/9ZfT//1l9P/9ZfT//1l9P/9ZfT//1l9P/9ZfT//1l9P/9ZfT//1l9P+9ZfTWfWX0wAAAAAAAAAAAPec1QD3nNVT95zV/Pec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1f/3nNX/95zV//ec1fz3nNVT95zVAAAAAAAAAAAA+aDYAPmg2ED5oNj1+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY//mg2P/5oNj/+aDY9fmg2ED5oNgAAAAAAAAAAAD6pNoA+qTaHPql29f6pdv/+qXb//ql2//6pdv/+qXb//ql2//6pdv/+qXb//ql2//6pdv/+qXb//ql2//6pdv/+qXb//ql2//6pdv/+qXb//ql2//6pdv/+qXb//ql2//6pdv/+qXb//6pdvX+qTaHPqk2gAAAAAAAAAAAPun3QD/2fcA/Kjdbvyp3vX8qd7//Kne//yp3v/8qd7//Kne//yp3v/8qd7//Kne//yp3v/8qd7//Kne//yp3v/8qd7//Kne//yp3v/8qd7//Kne//yp3v/8qd7//Kne//yp3v/8qd7//Kne9vyo3W7/xvMA+6fcAAAAAAAAAAAAAAAAAP2r3wD9q98H/qzgWP6t4LL+reDU/q3g3f6t4OD+reDg/q3g4P6t4OD+reDg/q3g4P6t4OD+reDg/q3g4P6t4OD+reDg/q3g4P6t4OD+reDg/q3g4P6t4OD+reDd/q3g1P6t4LL+rOBZ/avfB/2r3wAAAAAAAAAAAAAAAAAAAAAAAAAAAP+05QD/q94A/7DiBv+w4hT/sOIc/7DiH/+w4h//sOIf/7DiH/+w4h//sOIf/7DiH/+w4h//sOIf/7DiH/+w4h//sOIf/7DiH/+w4h//sOIf/7DiH/+w4hz/sOIU/7DiBv+r3wD/tOUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////////////////+AAAH+AAAAfgAAAHwAAAA8AAAAPAAAADwAAAA8AAAAPAAEADwDBAA8AIAAPABAADwAYAA8AGAAPABAADwAgAA8AwAAPAAAADwAAAA8AAAAPAAAADwAAAA8AAAAPgAAAH4AAAB/gAAB////////////////8=
+"""
+def get_temp_icon_path():
+    # Сохраняет иконку во временный файл и возвращает путь
+    icon_bytes = base64.b64decode(ICON_B64)
+    temp_dir = tempfile.gettempdir()
+    icon_path = os.path.join(temp_dir, f"{APP_NAME}_tray_icon.ico")
+    with open(icon_path, "wb") as f:
+        f.write(icon_bytes)
+    atexit.register(lambda: os.path.exists(icon_path) and os.remove(icon_path))
+    return icon_path
+
 TUNNEL_FILE = os.path.join(os.path.dirname(__file__), "tunnel.json")
 KEY_FILE = os.path.join(os.path.dirname(__file__), "key.bin")
 
@@ -55,11 +70,11 @@ class SSHTunnelWorker(QtCore.QThread):
                 password=decrypt_password(self.conn['password'])
             )
             transport = self.ssh_client.get_transport()
+            # Для reverse tunnel используем правильный вызов
+            # (address, port, handler=None)
             transport.request_port_forward(
-                '',
-                int(self.conn['forward_port']),
                 '127.0.0.1',
-                int(self.conn['local_port'])
+                int(self.conn['forward_port'])
             )
             self.statusChanged.emit('Активно')
             while self.running:
@@ -80,7 +95,7 @@ class MainWindow(QtWidgets.QWidget):
     def __init__(self, tray_icon):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(QtGui.QIcon(ICON_PATH))
+        self.setWindowIcon(QtGui.QIcon(get_temp_icon_path()))
         self.tray_icon = tray_icon
         self.resize(600, 400)
         self.tunnels = []
@@ -193,7 +208,7 @@ class AddConnectionDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Новое подключение")
-        self.setWindowIcon(QtGui.QIcon(ICON_PATH))
+        self.setWindowIcon(QtGui.QIcon(get_temp_icon_path()))
         layout = QtWidgets.QFormLayout(self)
         self.host = QtWidgets.QLineEdit()
         self.user = QtWidgets.QLineEdit()
@@ -226,7 +241,7 @@ class AddConnectionDialog(QtWidgets.QDialog):
 # --- Tray Icon ---
 class TrayIcon(QtWidgets.QSystemTrayIcon):
     def __init__(self, app, main_window):
-        super().__init__(QtGui.QIcon(ICON_PATH), app)
+        super().__init__(QtGui.QIcon(get_temp_icon_path()), app)
         self.app = app
         self.main_window = main_window
         self.setToolTip(APP_NAME)
@@ -279,6 +294,15 @@ def remove_from_autorun():
 # --- Main ---
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    # Создать tunnel.json и key.bin если их нет
+    if not os.path.exists(TUNNEL_FILE):
+        with open(TUNNEL_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'connections': []}, f, ensure_ascii=False, indent=2)
+    if not os.path.exists(KEY_FILE):
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key()
+        with open(KEY_FILE, 'wb') as f:
+            f.write(key)
     add_to_autorun()
     tray_icon = TrayIcon(app, None)
     main_window = MainWindow(tray_icon)
